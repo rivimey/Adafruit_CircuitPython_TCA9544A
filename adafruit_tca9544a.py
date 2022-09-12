@@ -28,7 +28,7 @@ Implementation Notes
 
 from micropython import const
 
-_DEFAULT_ADDRESS = const(0xe0)
+_DEFAULT_ADDRESS = const(0x70)
 
 __version__ = "0.0.0-auto.0"
 __repo__ = "https://github.com/rivimey/Adafruit_CircuitPython_TCA9544A.git"
@@ -43,31 +43,38 @@ class TCA9544A_Channel:
         self.tca = tca
         # NB: channel to select is bit0/bit1 and bit2=1 to connect chan.
         # NB: bit2=0 means no channel connected.
-        self.channel_switch = bytearray([(channel & 0x3) + 0x4])
+        self.channel_switch = bytearray([(channel & 0x3) | 0x4])
+        # print("> channel_switch: ", self.channel_switch)
 
     def try_lock(self):
         """Pass through for try_lock."""
-        while not self.tca.i2c.try_lock():
-            pass
-        self.tca.i2c.writeto(self.tca.address, self.channel_switch)
-        return True
+        # print("> try_lock(addr={}):".format(self.tca.address))
+        if self.tca.i2c.try_lock():
+            self.tca.i2c.writeto(self.tca.address, self.channel_switch)
+            return True
+        return False
 
     def unlock(self):
         """Pass through for unlock."""
         # NB: write '0' results in no channel connected.
         self.tca.i2c.writeto(self.tca.address, b"\x00")
+        # print("> unlock()")
         return self.tca.i2c.unlock()
 
     def readfrom_into(self, address, buffer, **kwargs):
         """Pass through for readfrom_into."""
         if address == self.tca.address:
             raise ValueError("Device address must be different than TCA9544A address.")
-        return self.tca.i2c.readfrom_into(address, buffer, **kwargs)
+        # print("> readfrom_into(addr={}):".format(address))
+        result = self.tca.i2c.readfrom_into(address, buffer, **kwargs)
+        # print(">         ... result={}):".format(buffer))
+        return result
 
     def writeto(self, address, buffer, **kwargs):
         """Pass through for writeto."""
         if address == self.tca.address:
             raise ValueError("Device address must be different than TCA9544A address.")
+        # print("> writeto(addr={}, data={}, len={}):".format(address, buffer, len(buffer)))
         return self.tca.i2c.writeto(address, buffer, **kwargs)
 
     def writeto_then_readfrom(self, address, buffer_out, buffer_in, **kwargs):
@@ -75,9 +82,10 @@ class TCA9544A_Channel:
         # In linux, at least, this is a special kernel function call
         if address == self.tca.address:
             raise ValueError("Device address must be different than TCA9544A address.")
-        return self.tca.i2c.writeto_then_readfrom(
-            address, buffer_out, buffer_in, **kwargs
-        )
+        # print("> writeto_then_readfrom(addr={}, data={}):".format(address, buffer_out))
+        result = self.tca.i2c.writeto_then_readfrom(address, buffer_out, buffer_in, **kwargs)
+        # print(">                          ... result={}):".format(buffer_in))
+        return result
 
     def scan(self):
         """Perform an I2C Device Scan"""
@@ -86,8 +94,8 @@ class TCA9544A_Channel:
 
 class TCA9544A:
     """Class which provides interface to TCA9544A I2C multiplexer.
-    Device has 3 bits of address on pins, top 4 are fixed, so 0xE0-0xEE.
-    Default address set to 0xE0.
+    Device has 3 bits of address on pins, top 4 are fixed, so 0x70-0x77.
+    Default address set to 0x70.
     """
 
     def __init__(self, i2c, address=_DEFAULT_ADDRESS):
@@ -108,8 +116,15 @@ class TCA9544A:
     @property
     def interrupts(self):
         """Get the interrupt status. There is no mask, and values are not latched. """
+        creg = self.controlreg
+        return (creg & 0xF0) >> 4
+
+    @property
+    def controlreg(self):
+        """Get the interrupt status. There is no mask, and values are not latched. """
         creg = bytearray([0x0])
-        self.i2c.readfrom_into(self.tca.address, creg)
-        # NB: top 4 bits are int status for chan0..3
-        return creg & 0xF0
+        if self.i2c.try_lock():
+            self.i2c.readfrom_into(self.address, creg)
+            self.i2c.unlock()
+        return int(creg[0])
 
